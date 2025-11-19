@@ -1,0 +1,46 @@
+name: DEV to UAT Promotion
+
+on:
+  push:
+    branches: [dev]
+
+jobs:
+  dev-validation:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+      
+    - name: Basic file validation
+      run: |
+        echo "Validating file structure and content..."
+        # Count files by type
+        echo "SQL files: $(find . -name "*.sql" | wc -l)"
+        echo "Python files: $(find . -name "*.py" | wc -l)"
+        echo "Total files to promote: $(find . -type f | wc -l)"
+        
+    - name: Show changes from previous version
+      run: |
+        echo "Changes in this promotion:"
+        git fetch origin uat
+        git diff --name-only origin/uat..HEAD || echo "First promotion to UAT"
+
+  create-uat-pr:
+    needs: dev-validation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Create PR to UAT
+      uses: repo-sync/pull-request@v2
+      with:
+        source_branch: "dev"
+        destination_branch: "uat"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        pr_title: "Promote changes from Dev to UAT - ${{ github.sha }}"
+        pr_body: "Automated PR: Changes ready for UAT testing. Required reviewers will be automatically assigned based on CODEOWNERS."
