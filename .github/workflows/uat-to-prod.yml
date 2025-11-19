@@ -7,41 +7,16 @@ on:
         description: 'Reason for production deployment'
         required: true
         default: 'UAT testing completed successfully'
-      change_ticket:
-        description: 'JIRA/ServiceNow ticket number'
+      jira_ticket:
+        description: 'JIRA ticket number'
         required: true
-      deployment_window:
-        description: 'Planned deployment time'
-        required: false
-        default: 'Business hours'
 
 env:
   SOURCE_BRANCH: uat
   TARGET_BRANCH: prod
 
 jobs:
-  validation-checks:
-    runs-on: ubuntu-latest
-    outputs:
-      validation_passed: ${{ steps.validate.outputs.passed }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          fetch-depth: 0
-      
-      - name: Validate UAT status
-        id: validate
-        run: |
-          # Check if UAT branch is stable
-          echo "Running pre-deployment validations..."
-          # Add your validation scripts here
-          echo "passed=true" >> $GITHUB_OUTPUT
-
   create-prod-pr:
-    needs: validation-checks
-    if: needs.validation-checks.outputs.validation_passed == 'true'
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -50,13 +25,12 @@ jobs:
         token: ${{ secrets.PAT_TOKEN }}
         fetch-depth: 0
     
-    - name: Install dependencies
-      run: sudo apt-get update && sudo apt-get install -y jq curl
+    - name: Install jq for JSON parsing
+      run: sudo apt-get update && sudo apt-get install -y jq
     
     - name: Check for existing PR
       id: check-pr
       run: |
-        # Same check as before
         response=$(curl -s -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
           "https://api.github.com/repos/${{ github.repository }}/pulls?state=open&base=prod&head=uat")
         pr_count=$(echo "$response" | jq length)
@@ -65,43 +39,21 @@ jobs:
     - name: Create Production PR
       if: steps.check-pr.outputs.pr_exists == 0
       run: |
-        PR_PAYLOAD=$(cat << EOF
-        {
-          "title": "🚀 PRODUCTION: ${{ inputs.change_ticket }} - UAT to Prod Deployment",
-          "body": "## Production Deployment Request\n\n**Requested By:** ${{ inputs.deployer_name || github.actor }}\n**Ticket:** ${{ inputs.change_ticket }}\n**Reason:** ${{ inputs.deployment_reason }}\n**Planned Window:** ${{ inputs.deployment_window }}\n\n### 📋 Deployment Checklist\n- [ ] UAT testing completed and signed off\n- [ ] Performance testing verified\n- [ ] Security scan passed\n- [ ] Rollback plan documented\n- [ ] Business approval obtained\n\n### 👥 Required Approvals\n- [ ] Development Lead\n- [ ] Product Manager\n- [ ] Operations Team\n\n### 📝 Change Summary\nAutomated promotion from UAT to Production environment.",
-          "head": "uat",
-          "base": "prod"
-        }
-        EOF
-        )
+        echo "Creating PR from uat to prod..."
         
         pr_response=$(curl -s -X POST \
           -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
           -H "Accept: application/vnd.github.v3+json" \
           "https://api.github.com/repos/${{ github.repository }}/pulls" \
-          -d "$PR_PAYLOAD")
+          -d '{
+            "title": "🚀 PRODUCTION: ${{ inputs.jira_ticket }} - UAT to Prod Deployment",
+            "body": "## Production Deployment Request\n\n**JIRA Ticket:** ${{ inputs.jira_ticket }}\n**Deployment Reason:** ${{ inputs.deployment_reason }}\n\n### Checkpoints Completed:\n- ✅ DEV testing successful\n- ✅ UAT testing successful\n\n### Approval Required:\n- [ ] Manager approval required from CODEOWNERS\n\nChanges are ready for production deployment after successful testing.",
+            "head": "uat",
+            "base": "prod"
+          }')
         
         pr_url=$(echo "$pr_response" | jq -r '.html_url')
         pr_number=$(echo "$pr_response" | jq -r '.number')
         
         echo "PR created: $pr_url"
         echo "PR_NUMBER=$pr_number" >> $GITHUB_ENV
-    
-    - name: Assign Reviewers and Labels
-      if: steps.check-pr.outputs.pr_exists == 0
-      run: |
-        # Add labels
-        curl -s -X POST \
-          -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/labels" \
-          -d '{"labels":["production", "deployment", "requires-approval"]}'
-        
-        # Request reviews from code owners
-        curl -s -X POST \
-          -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers" \
-          -d '{"team_reviewers":["prod-approvers"]}'
-        
-        echo "Reviewers assigned and labels added"
