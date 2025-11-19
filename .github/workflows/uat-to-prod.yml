@@ -1,0 +1,31 @@
+name: UAT to Prod Promotion
+
+on:
+  pull_request:
+    branches: [uat]
+    types: [closed]
+
+jobs:
+  create-prod-pr:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Show production changes
+      run: |
+        echo "Changes ready for production:"
+        git fetch origin prod
+        git diff --name-only origin/prod..HEAD
+        
+    - name: Create PR to Prod
+      uses: repo-sync/pull-request@v2
+      with:
+        source_branch: "uat"
+        destination_branch: "prod"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        pr_title: "Promote changes from UAT to PROD - ${{ github.sha }}"
+        pr_body: "Automated PR: Changes ready for Production deployment. Requires approval from code owners."
